@@ -75,69 +75,92 @@ async function uploadToOneDrive(fileName, fileBuffer, accessToken) {
 }
 
 /* ===============================
-   📅 Varredura Histórica (Catch-up)
-   Verifica ANTES de baixar para economizar banda e tempo
+   📅 Varredura Histórica Retroativa (Mês a Mês)
+   Percorre o histórico do canal de 2025 para trás, 
+   organizando por meses e verificando duplicatas.
 ================================= */
 async function runHistoricalSync(channelPeer) {
-  console.log("🚀 Iniciando sincronização histórica de 2026...");
-  const startDate = new Date("2026-01-01").getTime() / 1000;
-  let synced = 0;
-  let skipped = 0;
+  console.log("🚀 Iniciando sincronização histórica retroativa (2025 e anteriores)...");
+
+  // O usuário já baixou tudo de 2026, então começamos ANTES de 1º de Janeiro de 2026
+  const startBeforeDate = new Date("2026-01-01").getTime() / 1000;
+
+  let syncedCount = 0;
+  let skippedCount = 0;
+  let currentMonth = -1;
+  let currentYear = -1;
 
   try {
-    const accessToken = await getAccessToken(); // 1 token para toda a varredura
-    let tokenRefreshAt = Date.now() + 50 * 60 * 1000; // Renova a cada ~50 min
+    const accessToken = await getAccessToken();
+    let tokenRefreshAt = Date.now() + 50 * 60 * 1000;
 
-    for await (const message of client.iterMessages(targetChannel, { limit: 3000 })) {
-      // Para quando atingir mensagens anteriores a 2026
-      if (message.date < startDate) {
-        console.log(`📍 Sincronização histórica concluída. ✅ ${synced} novos | ⏭️ ${skipped} já existiam.`);
-        break;
-      }
+    // offsetDate: inicia em mensagens anteriores a essa data
+    const messageIterator = client.iterMessages(targetChannel, {
+      offsetDate: startBeforeDate,
+      limit: 10000 // Limite maior para pegar todo o histórico
+    });
 
+    for await (const message of messageIterator) {
       // Ignora mensagens sem documento PDF
       if (!message.media || !message.document) continue;
+
       const fileName = message.file?.name || `ebook_${message.id}.pdf`;
       if (!fileName.toLowerCase().endsWith(".pdf")) continue;
 
-      // Renova token se necessário
+      // Lógica de Log Mensal
+      const msgDate = new Date(message.date * 1000);
+      const msgMonth = msgDate.getMonth();
+      const msgYear = msgDate.getFullYear();
+
+      if (msgMonth !== currentMonth || msgYear !== currentYear) {
+        currentMonth = msgMonth;
+        currentYear = msgYear;
+        const monthName = msgDate.toLocaleString('pt-BR', { month: 'long' });
+        console.log(`\n📅 --- [ PROCESSANDO: ${monthName.toUpperCase()} / ${currentYear} ] ---`);
+      }
+
+      // Renova token do OneDrive se necessário
       let currentToken = accessToken;
       if (Date.now() > tokenRefreshAt) {
         currentToken = await getAccessToken();
         tokenRefreshAt = Date.now() + 50 * 60 * 1000;
-        console.log("🔑 Token renovado.");
+        console.log("🔑 Token OneDrive renovado.");
       }
 
-      // ✅ VERIFICA ANTES DE BAIXAR (evita download desnecessário)
+      // ✅ VERIFICA DUPLICIDADE NO ONEDRIVE
       const exists = await fileExistsOnOneDrive(fileName, currentToken);
       if (exists) {
-        console.log(`⏭️  Já existe: ${fileName}`);
-        skipped++;
+        process.stdout.write(`⏭️`); // Log compacto para arquivos que já existem
+        skippedCount++;
         continue;
       }
 
-      // Só baixa se realmente precisar fazer upload
-      console.log(`📥 Baixando: ${fileName}`);
-      const buffer = await client.downloadMedia(message.media, { workers: 2 });
-
-      await uploadToOneDrive(fileName, buffer, currentToken);
-      synced++;
-
-      // Reencaminha ao canal privado
+      // Download e Upload
+      console.log(`\n📥 [${msgYear}] Baixando: ${fileName}`);
       try {
+        const buffer = await client.downloadMedia(message.media, { workers: 2 });
+        await uploadToOneDrive(fileName, buffer, currentToken);
+        syncedCount++;
+
+        // Envia para o canal privado de backup
         await client.sendMessage(channelPeer, {
-          message: `📚 **Ebook Recuperado do Histórico**\n\nArquivo: \`${fileName}\`\n\n✅ Backup concluído no OneDrive.`,
+          message: `📚 **Histórico Recuperado (${monthName} / ${msgYear})**\n\nArquivo: \`${fileName}\`\n\n✅ Sincronizado.`,
           file: buffer,
         });
-      } catch (sendErr) {
-        console.warn(`⚠️ Não foi possível enviar ao canal: ${sendErr.message}`);
-      }
 
-      console.log(`✨ [${synced}] Sincronizado: ${fileName}`);
-      await new Promise((r) => setTimeout(r, 2000)); // Pausa para não sobrecarregar a API
+        console.log(`✨ [${syncedCount}] Concluído: ${fileName}`);
+        // Pequena pausa para evitar limites de taxa da API
+        await new Promise((r) => setTimeout(r, 1500));
+      } catch (err) {
+        console.error(`❌ Erro ao processar ${fileName}:`, err.message);
+      }
     }
+
+    console.log(`\n\n🏁 Sincronização histórica finalizada.`);
+    console.log(`✅ Novos arquivos: ${syncedCount} | ⏭️  Pulados (duplicados): ${skippedCount}`);
+
   } catch (err) {
-    console.error("⚠️ Falha na sincronização histórica:", err.message);
+    console.error("⚠️ Falha crítica na sincronização histórica:", err.message);
   }
 }
 
