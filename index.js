@@ -69,25 +69,67 @@ async function uploadToOneDrive(fileName, fileBuffer) {
 }
 
 /* ===============================
+   📅 Varredura Histórica (Catch-up)
+================================= */
+async function runHistoricalSync(channelPeer) {
+  console.log("🚀 Iniciando sincronização histórica de 2026...");
+  const startDate = new Date("2026-01-01").getTime() / 1000;
+
+  try {
+    for await (const message of client.iterMessages(targetChannel)) {
+      if (message.date < startDate) {
+        console.log("📍 Sincronização de 2026 concluída.");
+        break;
+      }
+
+      if (message.media && message.document) {
+        const fileName = message.file.name || `ebook_${message.id}.pdf`;
+        if (!fileName.toLowerCase().endsWith(".pdf")) continue;
+
+        // O uploadToOneDrive já verifica se existe
+        const buffer = await client.downloadMedia(message.media, { workers: 2 });
+        const result = await uploadToOneDrive(fileName, buffer);
+
+        if (!result.exists) {
+          await client.sendMessage(channelPeer, {
+            message: `📚 **Ebook Recuperado do Histórico**\n\nArquivo: \`${fileName}\`\n\n✅ Backup concluído.`,
+            file: buffer,
+          });
+          console.log(`✅ Sincronizado: ${fileName}`);
+          await new Promise(r => setTimeout(r, 3000)); // Pequena pausa
+        }
+      }
+    }
+  } catch (err) {
+    console.error("⚠️ Falha na sincronização histórica:", err.message);
+  }
+}
+
+/* ===============================
    🤖 Lógica do Userbot
 ================================= */
 (async () => {
   await client.connect();
   console.log("💎 Userbot Conectado e Vigilante!");
 
+  // Resolve canal de destino
   let channelPeer;
   try {
-    if (ownChannel.includes("t.me/+")) {
+    if (ownChannel && ownChannel.includes("t.me/+")) {
       const inviteHash = ownChannel.split("+")[1];
       try { await client.invoke(new Api.messages.ImportChatInvite({ hash: inviteHash })); } catch (e) { }
       const dialogs = await client.getDialogs();
       const found = dialogs.find(d => d.title?.toLowerCase().includes("ebook") || d.title?.toLowerCase().includes("igreja"));
       channelPeer = found ? found.entity : ownChannel;
     } else {
-      channelPeer = await client.getEntity(ownChannel);
+      channelPeer = ownChannel ? await client.getEntity(ownChannel) : "me";
     }
-  } catch (e) { channelPeer = ownChannel; }
+  } catch (e) { channelPeer = ownChannel || "me"; }
 
+  // 1. Inicia Sincronismo em Segundo Plano (não trava o bot)
+  runHistoricalSync(channelPeer);
+
+  // 2. Escuta Novas Mensagens (Tempo Real)
   client.addEventHandler(async (event) => {
     const message = event.message;
     if (message.media && message.document) {
@@ -98,26 +140,26 @@ async function uploadToOneDrive(fileName, fileBuffer) {
       const source = chat.username || chat.title || "Unknown";
 
       if (source === targetChannel || chat.id?.toString() === targetChannel || message.isPrivate) {
-        console.log(`� PDF Detectado: ${fileName}`);
+        console.log(`📩 PDF Detectado em tempo real: ${fileName}`);
         try {
           const buffer = await client.downloadMedia(message.media, { workers: 4 });
           const result = await uploadToOneDrive(fileName, buffer);
 
           if (!result.exists) {
             await client.sendMessage(channelPeer, {
-              message: `📚 **Novo eBook**\n\nArquivo: \`${fileName}\`\n\n✅ Salvo no OneDrive.`,
+              message: `📚 **Novo eBook detectado em @${targetChannel}**\n\nArquivo: \`${fileName}\`\n\n✅ Salvo no OneDrive.`,
               file: buffer,
             });
-            console.log(`✨ OK: ${fileName}`);
+            console.log(`✨ OK Finalizado: ${fileName}`);
           }
-        } catch (err) { console.error(`❌ Erro: ${err.message}`); }
+        } catch (err) { console.error(`❌ Erro Processo Real: ${err.message}`); }
       }
     }
   }, new NewMessage({ incoming: true }));
 })();
 
 const app = express();
-app.get("/", (req, res) => res.send("Userbot Ativo 💎"));
+app.get("/", (req, res) => res.send("Userbot Ativo com Sincronismo Histórico Ativado 💎"));
 app.get("/health", (req, res) => res.status(200).send("OK"));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🌍 Health check na porta ${PORT}`));
