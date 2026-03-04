@@ -24,6 +24,26 @@ const client = new TelegramClient(stringSession, apiId, apiHash, {
 });
 
 /* ===============================
+   🔍 Validação de Nome de Arquivo
+   Filtra arquivos com nomes genéricos (Telegram ID, WhatsApp DOC, etc)
+================================= */
+function isValidPdfName(fileName) {
+  if (!fileName) return false;
+  const nameWithoutExt = fileName.replace(/\.pdf$/i, "");
+  
+  // 1. Nomes puramente numéricos ou com separadores (ex: 1_4942903283430719531)
+  if (/^[\d_-]+$/.test(nameWithoutExt)) return false;
+
+  // 2. Padrao WhatsApp (DOC-20170203-WA0032)
+  if (/^DOC-\d{8}-WA\d+$/i.test(nameWithoutExt)) return false;
+
+  // 3. Nomes gerados automaticamente (ebook_123, pdf_123, file_123)
+  if (/^(ebook|pdf|file|document)_\d+$/i.test(nameWithoutExt)) return false;
+
+  return true;
+}
+
+/* ===============================
    🔐 Autenticação OneDrive (MS Graph)
 ================================= */
 async function getAccessToken() {
@@ -106,6 +126,11 @@ async function runHistoricalSync(channelPeer) {
 
       const fileName = message.file?.name || `ebook_${message.id}.pdf`;
       if (!fileName.toLowerCase().endsWith(".pdf")) continue;
+
+      // ✅ FILTRO DE NOMES VÁLIDOS (Evita DOC-XXXX, 12345.pdf, etc)
+      if (!isValidPdfName(fileName)) {
+        continue;
+      }
 
       // Lógica de Log Mensal
       const msgDate = new Date(message.date * 1000);
@@ -203,6 +228,12 @@ async function runHistoricalSync(channelPeer) {
 
     const fileName = message.file?.name || `pdf_${Date.now()}.pdf`;
     if (!fileName.toLowerCase().endsWith(".pdf")) return;
+
+    // ✅ FILTRO DE NOMES VÁLIDOS (Evita DOC-XXXX, 12345.pdf, etc)
+    if (!isValidPdfName(fileName)) {
+      console.log(`⏩ Ignorando nome genérico (tempo real): ${fileName}`);
+      return;
+    }
 
     let chat;
     try {
