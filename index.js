@@ -3,6 +3,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 
 const app = express();
+app.use(express.json());
 
 const token = process.env.BOT_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -14,7 +15,13 @@ if (!token || !clientId || !clientSecret || !tenantId) {
   process.exit(1);
 }
 
-const bot = new TelegramBot(token, { polling: true });
+// 🚀 MODO WEBHOOK (SEM POLLING)
+const bot = new TelegramBot(token);
+
+const RENDER_URL = "https://telegram-onedrive-bot.onrender.com";
+
+// Configura webhook
+bot.setWebHook(`${RENDER_URL}/bot${token}`);
 
 /* ===============================
    🔐 Pega token Microsoft Graph
@@ -52,6 +59,19 @@ async function uploadToOneDrive(fileName, fileBuffer) {
 }
 
 /* ===============================
+   🤖 Endpoint do Webhook
+================================= */
+app.post(`/bot${token}`, async (req, res) => {
+  try {
+    await bot.processUpdate(req.body);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error(error);
+    res.sendStatus(500);
+  }
+});
+
+/* ===============================
    🤖 Quando receber arquivo
 ================================= */
 bot.on("document", async (msg) => {
@@ -73,14 +93,10 @@ bot.on("document", async (msg) => {
 });
 
 /* ===============================
-   🌐 Servidor HTTP (Render)
+   🌐 Servidor HTTP
 ================================= */
 app.get("/", (req, res) => {
   res.send("Bot está online 🚀");
-});
-
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
 });
 
 app.listen(process.env.PORT || 3000, () => {
