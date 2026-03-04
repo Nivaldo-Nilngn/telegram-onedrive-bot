@@ -99,6 +99,10 @@ app.get("/", (req, res) => {
   res.send("Bot está online 🚀");
 });
 
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
 app.listen(process.env.PORT || 3000, () => {
   console.log("Servidor web ativo");
 });
