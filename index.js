@@ -26,17 +26,22 @@ bot.setWebHook(`${RENDER_URL}/bot${token}`);
    🔐 Token Microsoft Graph
 ================================= */
 async function getAccessToken() {
-  const response = await axios.post(
-    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
-    new URLSearchParams({
-      client_id: clientId,
-      scope: "https://graph.microsoft.com/.default",
-      client_secret: clientSecret,
-      grant_type: "client_credentials",
-    })
-  );
-
-  return response.data.access_token;
+  try {
+    const response = await axios.post(
+      `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+      new URLSearchParams({
+        client_id: clientId,
+        scope: "https://graph.microsoft.com/.default",
+        client_secret: clientSecret,
+        grant_type: "client_credentials",
+      })
+    );
+    console.log("✅ Token Microsoft obtido com sucesso.");
+    return response.data.access_token;
+  } catch (error) {
+    console.error("❌ Erro ao obter Token Microsoft:", error.response?.data || error.message);
+    throw error;
+  }
 }
 
 /* ===============================
@@ -51,6 +56,8 @@ async function uploadToOneDrive(fileName, fileBuffer) {
   // Salva na pasta específica 'ebooksIgreja'
   const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/ebooksIgreja/${safeFileName}:/content`;
 
+  console.log(`🚀 Tentando upload para: ${uploadUrl}`);
+
   const response = await axios.put(uploadUrl, fileBuffer, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -58,6 +65,7 @@ async function uploadToOneDrive(fileName, fileBuffer) {
     },
   });
 
+  console.log("✅ Resposta do OneDrive:", response.status);
   return response.data;
 }
 
