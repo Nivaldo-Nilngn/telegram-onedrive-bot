@@ -15,16 +15,14 @@ if (!token || !clientId || !clientSecret || !tenantId) {
   process.exit(1);
 }
 
-// 🚀 MODO WEBHOOK (SEM POLLING)
 const bot = new TelegramBot(token);
 
 const RENDER_URL = "https://telegram-onedrive-bot.onrender.com";
 
-// Configura webhook
 bot.setWebHook(`${RENDER_URL}/bot${token}`);
 
 /* ===============================
-   🔐 Pega token Microsoft Graph
+   🔐 Token Microsoft Graph
 ================================= */
 async function getAccessToken() {
   const response = await axios.post(
@@ -41,12 +39,12 @@ async function getAccessToken() {
 }
 
 /* ===============================
-   📤 Upload para OneDrive
+   📤 Upload OneDrive
 ================================= */
 async function uploadToOneDrive(fileName, fileBuffer) {
   const accessToken = await getAccessToken();
 
-  const uploadUrl = `https://graph.microsoft.com/v1.0/users/4d9c425f-abc5-4f86-a275-f2280196fd83/drive/root:/${fileName}:/content`;
+  const uploadUrl = `https://graph.microsoft.com/v1.0/users/SEU_USER_ID_AQUI/drive/root:/${fileName}:/content`;
 
   const response = await axios.put(uploadUrl, fileBuffer, {
     headers: {
@@ -59,7 +57,7 @@ async function uploadToOneDrive(fileName, fileBuffer) {
 }
 
 /* ===============================
-   🤖 Endpoint do Webhook
+   🤖 Webhook
 ================================= */
 app.post(`/bot${token}`, async (req, res) => {
   try {
@@ -72,7 +70,7 @@ app.post(`/bot${token}`, async (req, res) => {
 });
 
 /* ===============================
-   🤖 Quando receber arquivo
+   📥 Receber arquivo
 ================================= */
 bot.on("document", async (msg) => {
   try {
@@ -93,16 +91,20 @@ bot.on("document", async (msg) => {
 });
 
 /* ===============================
-   🌐 Servidor HTTP
+   🌐 Rotas HTTP
 ================================= */
+
 app.get("/", (req, res) => {
   res.send("Bot está online 🚀");
 });
 
+// 👇 ESSA ROTA É O QUE O RENDER PRECISA
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Servidor web ativo");
+const PORT = process.env.PORT || 10000;
+
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
