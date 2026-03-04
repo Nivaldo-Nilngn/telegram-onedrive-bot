@@ -9,9 +9,10 @@ const token = process.env.BOT_TOKEN;
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const tenantId = process.env.TENANT_ID;
+const userId = process.env.USER_ID;
 
-if (!token || !clientId || !clientSecret || !tenantId) {
-  console.error("Variáveis de ambiente não configuradas!");
+if (!token || !clientId || !clientSecret || !tenantId || !userId) {
+  console.error("Variáveis de ambiente não configuradas! Certifique-se de definir BOT_TOKEN, CLIENT_ID, CLIENT_SECRET, TENANT_ID e USER_ID.");
   process.exit(1);
 }
 
@@ -44,7 +45,11 @@ async function getAccessToken() {
 async function uploadToOneDrive(fileName, fileBuffer) {
   const accessToken = await getAccessToken();
 
-  const uploadUrl = `https://graph.microsoft.com/v1.0/users/4d9c425f-abc5-4f86-a275-f2280196fd83/drive/root:/${fileName}:/content`;
+  // Encode o nome do arquivo para evitar erros com espaços ou caracteres especiais
+  const safeFileName = encodeURIComponent(fileName);
+
+  // Salva na pasta específica 'ebooksIgreja'
+  const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/ebooksIgreja/${safeFileName}:/content`;
 
   const response = await axios.put(uploadUrl, fileBuffer, {
     headers: {
