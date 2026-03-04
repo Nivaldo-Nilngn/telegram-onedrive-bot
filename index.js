@@ -16,7 +16,9 @@ if (!token || !clientId || !clientSecret || !tenantId) {
 
 const bot = new TelegramBot(token, { polling: true });
 
-// 🔐 Pega token da Microsoft
+/* ===============================
+   🔐 Pega token Microsoft Graph
+================================= */
 async function getAccessToken() {
   const response = await axios.post(
     `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
@@ -31,40 +33,48 @@ async function getAccessToken() {
   return response.data.access_token;
 }
 
-// 📤 Upload para OneDrive
+/* ===============================
+   📤 Upload para OneDrive
+================================= */
 async function uploadToOneDrive(fileName, fileBuffer) {
   const accessToken = await getAccessToken();
 
-  await axios.put(
-    `https://graph.microsoft.com/v1.0/me/drive/root:/${fileName}:/content`,
-    fileBuffer,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/octet-stream",
-      },
-    }
-  );
+  const uploadUrl = `https://graph.microsoft.com/v1.0/users/4d9c425f-abc5-4f86-a275-f2280196fd83/drive/root:/${fileName}:/content`;
+
+  const response = await axios.put(uploadUrl, fileBuffer, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/octet-stream",
+    },
+  });
+
+  return response.data;
 }
 
-// 🤖 Quando receber arquivo
+/* ===============================
+   🤖 Quando receber arquivo
+================================= */
 bot.on("document", async (msg) => {
   try {
     const file = await bot.getFile(msg.document.file_id);
     const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
 
-    const response = await axios.get(fileUrl, { responseType: "arraybuffer" });
+    const response = await axios.get(fileUrl, {
+      responseType: "arraybuffer",
+    });
 
     await uploadToOneDrive(msg.document.file_name, response.data);
 
     bot.sendMessage(msg.chat.id, "✅ Arquivo enviado para o OneDrive!");
   } catch (error) {
-    console.error(error);
+    console.error(error.response?.data || error.message);
     bot.sendMessage(msg.chat.id, "❌ Erro ao enviar para OneDrive.");
   }
 });
 
-// 🌐 Servidor HTTP
+/* ===============================
+   🌐 Servidor HTTP (Render)
+================================= */
 app.get("/", (req, res) => {
   res.send("Bot está online 🚀");
 });
