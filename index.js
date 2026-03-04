@@ -1,72 +1,32 @@
-const TelegramBot = require('node-telegram-bot-api');
-const axios = require('axios');
-const fs = require('fs');
+const express = require("express");
+const TelegramBot = require("node-telegram-bot-api");
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const TENANT_ID = process.env.TENANT_ID;
+const app = express();
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+// 🔐 Pega o token do Render (Environment Variable)
+const token = process.env.BOT_TOKEN;
 
-async function getAccessToken() {
-  const response = await axios.post(
-    `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`,
-    new URLSearchParams({
-      client_id: CLIENT_ID,
-      scope: "https://graph.microsoft.com/.default",
-      client_secret: CLIENT_SECRET,
-      grant_type: "client_credentials"
-    })
-  );
-  return response.data.access_token;
+if (!token) {
+  console.error("BOT_TOKEN não foi definido!");
+  process.exit(1);
 }
 
-async function fileExists(filename, token) {
-  try {
-    await axios.get(
-      `https://graph.microsoft.com/v1.0/me/drive/root:/ebooksIgreja/${filename}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
+// 🤖 Inicia o bot
+const bot = new TelegramBot(token, { polling: true });
 
-bot.on('channel_post', async (msg) => {
-  if (!msg.document) return;
-  if (!msg.document.file_name.endsWith(".pdf")) return;
+bot.on("message", (msg) => {
+  bot.sendMessage(msg.chat.id, "Bot está funcionando 🚀");
+});
 
-  const fileName = msg.document.file_name;
-  console.log("Recebido:", fileName);
+// 🌐 Servidor HTTP (para Render não dormir)
+app.get("/", (req, res) => {
+  res.send("Bot está online 🚀");
+});
 
-  const file = await bot.getFile(msg.document.file_id);
-  const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  fs.writeFileSync(fileName, response.data);
-
-  const token = await getAccessToken();
-  const exists = await fileExists(fileName, token);
-
-  if (exists) {
-    console.log("Já existe:", fileName);
-    fs.unlinkSync(fileName);
-    return;
-  }
-
-  await axios.put(
-    `https://graph.microsoft.com/v1.0/me/drive/root:/ebooksIgreja/${fileName}:/content`,
-    fs.readFileSync(fileName),
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/pdf"
-      }
-    }
-  );
-
-  fs.unlinkSync(fileName);
-  console.log("Enviado com sucesso:", fileName);
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Servidor web ativo");
 });
