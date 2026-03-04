@@ -79,6 +79,11 @@ app.post(`/bot${token}`, async (req, res) => {
 ================================= */
 bot.on("document", async (msg) => {
   try {
+    // Verifica se o arquivo é um PDF
+    if (msg.document.mime_type !== "application/pdf" && !msg.document.file_name.toLowerCase().endsWith(".pdf")) {
+      return bot.sendMessage(msg.chat.id, "⚠️ Por favor, envie apenas arquivos no formato PDF.");
+    }
+
     const file = await bot.getFile(msg.document.file_id);
     const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
 
@@ -88,10 +93,10 @@ bot.on("document", async (msg) => {
 
     await uploadToOneDrive(msg.document.file_name, response.data);
 
-    bot.sendMessage(msg.chat.id, "✅ Arquivo enviado para o OneDrive!");
+    bot.sendMessage(msg.chat.id, "✅ PDF enviado para a pasta ebooksIgreja!");
   } catch (error) {
     console.error(error.response?.data || error.message);
-    bot.sendMessage(msg.chat.id, "❌ Erro ao enviar para OneDrive.");
+    bot.sendMessage(msg.chat.id, "❌ Erro ao enviar o PDF para o OneDrive.");
   }
 });
 
