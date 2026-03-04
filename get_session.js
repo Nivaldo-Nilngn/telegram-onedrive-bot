@@ -2,8 +2,8 @@ const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const input = require("input");
 
-const apiId = 0000000; // Coloque seu API ID aqui
-const apiHash = "SUA_API_HASH"; // Coloque sua API HASH aqui
+const apiId = 31636935; // Coloque seu API ID aqui
+const apiHash = "5571bf4e02da970cda1ca9962590a398"; // Coloque sua API HASH aqui
 const stringSession = new StringSession(""); // Vazio para começar uma nova sessão
 
 (async () => {

@@ -75,39 +75,43 @@ async function uploadToOneDrive(fileName, fileBuffer) {
 ================================= */
 (async () => {
   await client.connect();
-  console.log("� Userbot Conectado e Vigilante!");
+  console.log(" Userbot Conectado e Vigilante!");
 
   client.addEventHandler(async (event) => {
     const message = event.message;
 
-    // Verifica se a mensagem tem documento e se é de um canal/grupo
+    // Verifica se a mensagem tem documento (PDF)
     if (message.media && message.document) {
       const fileName = message.file.name || `pdf_${Date.now()}.pdf`;
-
-      // Filtra apenas PDF
       if (!fileName.toLowerCase().endsWith(".pdf")) return;
 
-      console.log(`� Novo PDF detectado: ${fileName}`);
+      // Pega informações sobre de onde veio a mensagem
+      const sender = await message.getChat();
+      const senderUsername = sender.username || sender.title;
 
-      try {
-        // 1. Baixar o arquivo do Telegram (Streaming eficiente)
-        const buffer = await client.downloadMedia(message.media, {
-          workers: 4,
-        });
+      // Log de monitoramento
+      console.log(`📩 PDF Detectado vindo de: ${senderUsername}`);
 
-        // 2. Enviar para o OneDrive
-        await uploadToOneDrive(fileName, buffer);
+      // Só processa se vier do canal alvo OU se for você enviando para o bot para testar
+      if (senderUsername === targetChannel || senderUsername === "me" || message.isPrivate) {
+        console.log(`🚀 Iniciando processamento automático: ${fileName}`);
 
-        // 3. Postar no SEU Canal (Opcional, mas útil)
-        await client.sendMessage(ownChannel, {
-          message: `📚 Novo eBook detectado: **${fileName}**\nSalvo automaticamente no OneDrive.`,
-          file: buffer,
-        });
+        try {
+          const buffer = await client.downloadMedia(message.media, {
+            workers: 4,
+          });
 
-        console.log(`✨ Processo completo para: ${fileName}`);
+          await uploadToOneDrive(fileName, buffer);
 
-      } catch (err) {
-        console.error(`❌ Falha ao processar ${fileName}:`, err.message);
+          await client.sendMessage(ownChannel, {
+            message: `📚 **Novo eBook encontrado em @${targetChannel}**\n\nArquivo: \`${fileName}\`\n\n✅ Salvo automaticamente no OneDrive.`,
+            file: buffer,
+          });
+
+          console.log(`✨ Arquivo processado com sucesso!`);
+        } catch (err) {
+          console.error(`❌ Erro no processamento:`, err.message);
+        }
       }
     }
   }, new NewMessage({ incoming: true }));
@@ -116,7 +120,7 @@ async function uploadToOneDrive(fileName, fileBuffer) {
 /* ===============================
    🌐 Rotas Express (Render)
 ================================= */
-app.get("/", (req, res) => res.send("Userbot Ativo �"));
+app.get("/", (req, res) => res.send("Userbot Ativo "));
 app.get("/health", (req, res) => res.status(200).send("OK"));
 
 const PORT = process.env.PORT || 10000;
