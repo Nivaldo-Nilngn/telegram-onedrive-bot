@@ -1,26 +1,34 @@
+const { TelegramClient, Api } = require("telegram");
+const { StringSession } = require("telegram/sessions");
+const { NewMessage } = require("telegram/events");
 const express = require("express");
-const TelegramBot = require("node-telegram-bot-api");
 const axios = require("axios");
 
+// Configurações Express para o Render
 const app = express();
 app.use(express.json());
 
-const token = process.env.BOT_TOKEN;
+// Variáveis de Ambiente
+const apiId = parseInt(process.env.API_ID);
+const apiHash = process.env.API_HASH;
+const stringSession = new StringSession(process.env.STRING_SESSION || "");
+const targetChannel = process.env.TARGET_CHANNEL || "livrosemaudio"; // Canal a vigiar
+const ownChannel = process.env.OWN_CHANNEL; // Seu canal de destino
+
+// OneDrive Env
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const tenantId = process.env.TENANT_ID;
 const userId = process.env.USER_ID;
 
-if (!token || !clientId || !clientSecret || !tenantId || !userId) {
-  console.error("Variáveis de ambiente não configuradas! Certifique-se de definir BOT_TOKEN, CLIENT_ID, CLIENT_SECRET, TENANT_ID e USER_ID.");
+if (!apiId || !apiHash || !clientId || !clientSecret || !tenantId || !userId || !ownChannel) {
+  console.error("❌ ERRO: Faltam variáveis de ambiente (API_ID, API_HASH, CLIENT_ID, ETC)");
   process.exit(1);
 }
 
-const bot = new TelegramBot(token);
-
-const RENDER_URL = "https://telegram-onedrive-bot.onrender.com";
-
-bot.setWebHook(`${RENDER_URL}/bot${token}`);
+const client = new TelegramClient(stringSession, apiId, apiHash, {
+  connectionRetries: 5,
+});
 
 /* ===============================
    🔐 Token Microsoft Graph
@@ -36,10 +44,9 @@ async function getAccessToken() {
         grant_type: "client_credentials",
       })
     );
-    console.log("✅ Token Microsoft obtido com sucesso.");
     return response.data.access_token;
   } catch (error) {
-    console.error("❌ Erro ao obter Token Microsoft:", error.response?.data || error.message);
+    console.error("❌ Erro Token Microsoft:", error.response?.data || error.message);
     throw error;
   }
 }
@@ -49,80 +56,68 @@ async function getAccessToken() {
 ================================= */
 async function uploadToOneDrive(fileName, fileBuffer) {
   const accessToken = await getAccessToken();
-
-  // Encode o nome do arquivo para evitar erros com espaços ou caracteres especiais
   const safeFileName = encodeURIComponent(fileName);
-
-  // Salva na pasta específica 'ebooksIgreja'
   const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/ebooksIgreja/${safeFileName}:/content`;
 
-  console.log(`🚀 Tentando upload para: ${uploadUrl}`);
+  console.log(`🚀 Uploading: ${fileName} para OneDrive...`);
 
-  const response = await axios.put(uploadUrl, fileBuffer, {
+  await axios.put(uploadUrl, fileBuffer, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/octet-stream",
     },
   });
-
-  console.log("✅ Resposta do OneDrive:", response.status);
-  return response.data;
+  console.log(`✅ ${fileName} salvo no OneDrive!`);
 }
 
 /* ===============================
-   🤖 Webhook
+   🤖 Lógica do Userbot
 ================================= */
-app.post(`/bot${token}`, async (req, res) => {
-  try {
-    await bot.processUpdate(req.body);
-    res.sendStatus(200);
-  } catch (error) {
-    console.error(error);
-    res.sendStatus(500);
-  }
-});
+(async () => {
+  await client.connect();
+  console.log("� Userbot Conectado e Vigilante!");
 
-/* ===============================
-   📥 Receber arquivo
-================================= */
-bot.on("document", async (msg) => {
-  try {
-    // Verifica se o arquivo é um PDF
-    if (msg.document.mime_type !== "application/pdf" && !msg.document.file_name.toLowerCase().endsWith(".pdf")) {
-      return bot.sendMessage(msg.chat.id, "⚠️ Por favor, envie apenas arquivos no formato PDF.");
+  client.addEventHandler(async (event) => {
+    const message = event.message;
+
+    // Verifica se a mensagem tem documento e se é de um canal/grupo
+    if (message.media && message.document) {
+      const fileName = message.file.name || `pdf_${Date.now()}.pdf`;
+
+      // Filtra apenas PDF
+      if (!fileName.toLowerCase().endsWith(".pdf")) return;
+
+      console.log(`� Novo PDF detectado: ${fileName}`);
+
+      try {
+        // 1. Baixar o arquivo do Telegram (Streaming eficiente)
+        const buffer = await client.downloadMedia(message.media, {
+          workers: 4,
+        });
+
+        // 2. Enviar para o OneDrive
+        await uploadToOneDrive(fileName, buffer);
+
+        // 3. Postar no SEU Canal (Opcional, mas útil)
+        await client.sendMessage(ownChannel, {
+          message: `📚 Novo eBook detectado: **${fileName}**\nSalvo automaticamente no OneDrive.`,
+          file: buffer,
+        });
+
+        console.log(`✨ Processo completo para: ${fileName}`);
+
+      } catch (err) {
+        console.error(`❌ Falha ao processar ${fileName}:`, err.message);
+      }
     }
-
-    const file = await bot.getFile(msg.document.file_id);
-    const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-
-    const response = await axios.get(fileUrl, {
-      responseType: "arraybuffer",
-    });
-
-    await uploadToOneDrive(msg.document.file_name, response.data);
-
-    bot.sendMessage(msg.chat.id, "✅ PDF enviado para a pasta ebooksIgreja!");
-  } catch (error) {
-    console.error(error.response?.data || error.message);
-    bot.sendMessage(msg.chat.id, "❌ Erro ao enviar o PDF para o OneDrive.");
-  }
-});
+  }, new NewMessage({ incoming: true }));
+})();
 
 /* ===============================
-   🌐 Rotas HTTP
+   🌐 Rotas Express (Render)
 ================================= */
-
-app.get("/", (req, res) => {
-  res.send("Bot está online 🚀");
-});
-
-// 👇 ESSA ROTA É O QUE O RENDER PRECISA
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
-});
+app.get("/", (req, res) => res.send("Userbot Ativo �"));
+app.get("/health", (req, res) => res.status(200).send("OK"));
 
 const PORT = process.env.PORT || 10000;
-
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Monitor Express na porta ${PORT}`));
