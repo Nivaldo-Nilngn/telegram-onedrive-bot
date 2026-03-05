@@ -64,6 +64,15 @@ async function getAccessToken() {
 /* ===============================
    � Verifica se arquivo existe no OneDrive (SEM baixar)
 ================================= */
+/* ===============================
+   🧹 Sanitiza Nome do Arquivo
+================================= */
+function sanitizeFileName(fileName) {
+  if (!fileName) return "documento.pdf";
+  // Remove caracteres proibidos no OneDrive: " * : < > ? / \ |
+  return fileName.replace(/["*:<>?/\\|]/g, "").replace(/\s+/g, " ").trim() || "documento.pdf";
+}
+
 async function fileExistsOnOneDrive(fileName, accessToken) {
   const safeFileName = encodeURIComponent(fileName);
   const checkUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/ebooksIgreja/${safeFileName}`;
@@ -168,8 +177,9 @@ async function runHistoricalSync(channelPeer) {
       // 2. Filtros de Mensagem
       if (!message.media || !message.document) continue;
 
-      const fileName = message.file?.name || `ebook_${message.id}.pdf`;
-      if (!fileName.toLowerCase().endsWith(".pdf")) continue;
+      const rawFileName = message.file?.name || `ebook_${message.id}.pdf`;
+      if (!rawFileName.toLowerCase().endsWith(".pdf")) continue;
+      const fileName = sanitizeFileName(rawFileName);
 
       // 3. Validação de Nome (Filtro solicitado: sem números puros)
       if (!isValidPdfName(fileName)) {
@@ -185,17 +195,17 @@ async function runHistoricalSync(channelPeer) {
         console.log("🔑 Token OneDrive renovado.");
       }
 
-      // ✅ VERIFICA DUPLICIDADE NO ONEDRIVE
-      const exists = await fileExistsOnOneDrive(fileName, currentToken);
-      if (exists) {
-        process.stdout.write(`⏭️`); // Log compacto para arquivos que já existem
-        skippedCount++;
-        continue;
-      }
-
-      // Download e Upload
-      console.log(`\n📥 [${msgYear}] Baixando: ${fileName}`);
       try {
+        // ✅ VERIFICA DUPLICIDADE NO ONEDRIVE
+        const exists = await fileExistsOnOneDrive(fileName, currentToken);
+        if (exists) {
+          process.stdout.write(`⏭️`); // Log compacto para arquivos que já existem
+          skippedCount++;
+          continue;
+        }
+
+        // Download e Upload
+        console.log(`\n📥 [${msgYear}] Baixando: ${fileName}`);
         const buffer = await client.downloadMedia(message.media, { workers: 2 });
         await uploadToOneDrive(fileName, buffer, currentToken);
         syncedCount++;
@@ -210,7 +220,7 @@ async function runHistoricalSync(channelPeer) {
         // Pequena pausa para evitar limites de taxa da API
         await new Promise((r) => setTimeout(r, 1500));
       } catch (err) {
-        console.error(`❌ Erro ao processar ${fileName}:`, err.message);
+        console.error(`\n❌ Erro ao processar ${fileName}:`, err.response ? JSON.stringify(err.response.data) : err.message);
       }
     }
 
@@ -265,8 +275,9 @@ async function runHistoricalSync(channelPeer) {
     const message = event.message;
     if (!message.media || !message.document) return;
 
-    const fileName = message.file?.name || `pdf_${Date.now()}.pdf`;
-    if (!fileName.toLowerCase().endsWith(".pdf")) return;
+    const rawFileName = message.file?.name || `pdf_${Date.now()}.pdf`;
+    if (!rawFileName.toLowerCase().endsWith(".pdf")) return;
+    const fileName = sanitizeFileName(rawFileName);
 
     // ✅ FILTRO DE NOMES VÁLIDOS (Evita DOC-XXXX, 12345.pdf, etc)
     if (!isValidPdfName(fileName)) {
