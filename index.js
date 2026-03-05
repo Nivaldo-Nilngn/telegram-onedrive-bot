@@ -30,14 +30,17 @@ const client = new TelegramClient(stringSession, apiId, apiHash, {
 function isValidPdfName(fileName) {
   if (!fileName) return false;
   const nameWithoutExt = fileName.replace(/\.pdf$/i, "");
-  
-  // 1. Nomes puramente numéricos ou com separadores (ex: 1_4942903283430719531)
-  if (/^[\d_-]+$/.test(nameWithoutExt)) return false;
+
+  // Regra: O nome deve conter pelo menos uma letra (latina ou acentuada).
+  // Isso evita que arquivos com nomes puramente numéricos (ID do Telegram, timestamps, etc)
+  // sejam sincronizados, pois ficariam estranhos para o usuário final.
+  const hasLetters = /[a-zA-ZáéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ]/.test(nameWithoutExt);
+  if (!hasLetters) return false;
 
   // 2. Padrao WhatsApp (DOC-20170203-WA0032)
   if (/^DOC-\d{8}-WA\d+$/i.test(nameWithoutExt)) return false;
 
-  // 3. Nomes gerados automaticamente (ebook_123, pdf_123, file_123)
+  // 3. Nomes genéricos (ebook_123, pdf_123, file_123)
   if (/^(ebook|pdf|file|document)_\d+$/i.test(nameWithoutExt)) return false;
 
   return true;
@@ -76,21 +79,50 @@ async function fileExistsOnOneDrive(fileName, accessToken) {
 }
 
 /* ===============================
-   📤 Upload OneDrive
+   📤 Upload OneDrive (Suporta Arquivos Grandes)
 ================================= */
 async function uploadToOneDrive(fileName, fileBuffer, accessToken) {
   const safeFileName = encodeURIComponent(fileName);
-  const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/ebooksIgreja/${safeFileName}:/content`;
+  const folderPath = "ebooksIgreja";
+  const fileSize = fileBuffer.length;
 
-  console.log(`🚀 Uploading: ${fileName}...`);
-  await axios.put(uploadUrl, fileBuffer, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/octet-stream",
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-  });
+  // Se o arquivo for pequeno (< 4MB), usamos o upload simples (opcional, mas vamos unificar no session para segurança)
+  // Ou usamos upload simples para < 4MB para ser mais rápido.
+  if (fileSize < 4 * 1024 * 1024) {
+    const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/${folderPath}/${safeFileName}:/content`;
+    console.log(`🚀 Uploading (Simple): ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)} MB)...`);
+    await axios.put(uploadUrl, fileBuffer, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/octet-stream",
+      },
+    });
+  } else {
+    // Arquivos > 4MB precisam de Upload Session
+    console.log(`🚀 Uploading (Session): ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)} MB)...`);
+
+    // 1. Criar sessão de upload
+    const sessionUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/${folderPath}/${safeFileName}:/createUploadSession`;
+    const sessionResponse = await axios.post(sessionUrl, {}, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const uploadUrl = sessionResponse.data.uploadUrl;
+
+    // 2. Upload em partes (bytes)
+    const chunkSize = 320 * 1024 * 10; // 3.2MB por parte (deve ser múltiplo de 320KB)
+    for (let start = 0; start < fileSize; start += chunkSize) {
+      const end = Math.min(start + chunkSize, fileSize);
+      const part = fileBuffer.slice(start, end);
+
+      await axios.put(uploadUrl, part, {
+        headers: {
+          "Content-Range": `bytes ${start}-${end - 1}/${fileSize}`,
+          "Content-Length": part.length,
+        }
+      });
+      // process.stdout.write(".");
+    }
+  }
   console.log(`✅ Upload concluído: ${fileName}`);
 }
 
@@ -117,22 +149,11 @@ async function runHistoricalSync(channelPeer) {
     // offsetDate: inicia em mensagens anteriores a essa data
     const messageIterator = client.iterMessages(targetChannel, {
       offsetDate: startBeforeDate,
-      limit: 10000 // Limite maior para pegar todo o histórico
+      limit: null // Varre todo o canal com paginação automática
     });
 
     for await (const message of messageIterator) {
-      // Ignora mensagens sem documento PDF
-      if (!message.media || !message.document) continue;
-
-      const fileName = message.file?.name || `ebook_${message.id}.pdf`;
-      if (!fileName.toLowerCase().endsWith(".pdf")) continue;
-
-      // ✅ FILTRO DE NOMES VÁLIDOS (Evita DOC-XXXX, 12345.pdf, etc)
-      if (!isValidPdfName(fileName)) {
-        continue;
-      }
-
-      // Lógica de Log Mensal
+      // 1. Lógica de Log Mensal (Top da iteração para mostrar progresso mesmo em meses sem PDFs)
       const msgDate = new Date(message.date * 1000);
       const msgMonth = msgDate.getMonth();
       const msgYear = msgDate.getFullYear();
@@ -141,7 +162,19 @@ async function runHistoricalSync(channelPeer) {
         currentMonth = msgMonth;
         currentYear = msgYear;
         const monthName = msgDate.toLocaleString('pt-BR', { month: 'long' });
-        console.log(`\n📅 --- [ PROCESSANDO: ${monthName.toUpperCase()} / ${currentYear} ] ---`);
+        console.log(`\n📅 --- [ HISTÓRICO: Verificando ${monthName.toUpperCase()} / ${currentYear} ] ---`);
+      }
+
+      // 2. Filtros de Mensagem
+      if (!message.media || !message.document) continue;
+
+      const fileName = message.file?.name || `ebook_${message.id}.pdf`;
+      if (!fileName.toLowerCase().endsWith(".pdf")) continue;
+
+      // 3. Validação de Nome (Filtro solicitado: sem números puros)
+      if (!isValidPdfName(fileName)) {
+        process.stdout.write(`.`); // Ponto indica que achou um arquivo, mas o nome foi rejeitado
+        continue;
       }
 
       // Renova token do OneDrive se necessário
@@ -185,7 +218,13 @@ async function runHistoricalSync(channelPeer) {
     console.log(`✅ Novos arquivos: ${syncedCount} | ⏭️  Pulados (duplicados): ${skippedCount}`);
 
   } catch (err) {
-    console.error("⚠️ Falha crítica na sincronização histórica:", err.message);
+    console.error("⚠️ Falha crítica na sincronização histórica:");
+    if (err.response) {
+      console.error(`Status: ${err.response.status}`);
+      console.error(`Data: ${JSON.stringify(err.response.data)}`);
+    } else {
+      console.error(err.message);
+    }
   }
 }
 
