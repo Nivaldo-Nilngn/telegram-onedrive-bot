@@ -206,29 +206,29 @@ async function runHistoricalSync(channelPeer) {
         // ✅ Notifica canal SEM reenviar o arquivo (economiza memória)
         const monthName = msgDate.toLocaleString("pt-BR", { month: "long" });
         await client.sendMessage(channelPeer, {
-          message: `📚 **Histórico Recuperado (${monthName} / ${msgYear})**\n\nArquivo: \`${fileName}\\`\n\n✅ Sincronizado no OneDrive.`,
+          message: `📚 **Histórico Recuperado (${monthName} / ${msgYear})**\n\nArquivo: '${fileName}'\n\n✅ Sincronizado no OneDrive.`,
         });
 
         syncedCount++;
-        console.log(`✨[${ syncedCount }]Concluído: ${ fileName }`);
+        console.log(`✨[${syncedCount}]Concluído: ${fileName}`);
 
         // Pausa entre arquivos para dar tempo ao GC liberar memória
         await new Promise((r) => setTimeout(r, 2000));
 
       } catch (err) {
-        console.error(`\n❌ Erro ao processar ${ fileName }: `, err.response ? JSON.stringify(err.response.data) : err.message);
+        console.error(`\n❌ Erro ao processar ${fileName}: `, err.response ? JSON.stringify(err.response.data) : err.message);
         // Continua mesmo em caso de erro
       }
     }
 
     console.log(`\n\n🏁 Sincronização histórica finalizada.`);
-    console.log(`✅ Novos: ${ syncedCount } | ⏭️  Pulados: ${ skippedCount }`);
+    console.log(`✅ Novos: ${syncedCount} | ⏭️  Pulados: ${skippedCount}`);
 
   } catch (err) {
     console.error("⚠️ Falha crítica na sincronização histórica:");
     if (err.response) {
-      console.error(`Status: ${ err.response.status }`);
-      console.error(`Data: ${ JSON.stringify(err.response.data) }`);
+      console.error(`Status: ${err.response.status}`);
+      console.error(`Data: ${JSON.stringify(err.response.data)}`);
     } else {
       console.error(err.message);
     }
@@ -247,7 +247,7 @@ async function runHistoricalSync(channelPeer) {
   try {
     if (ownChannel && ownChannel.includes("t.me/+")) {
       const inviteHash = ownChannel.split("+")[1];
-      try { await client.invoke(new Api.messages.ImportChatInvite({ hash: inviteHash })); } catch (e) {}
+      try { await client.invoke(new Api.messages.ImportChatInvite({ hash: inviteHash })); } catch (e) { }
       const dialogs = await client.getDialogs();
       const found = dialogs.find(
         (d) => d.title?.toLowerCase().includes("ebook") || d.title?.toLowerCase().includes("igreja")
@@ -268,12 +268,12 @@ async function runHistoricalSync(channelPeer) {
     const message = event.message;
     if (!message.media || !message.document) return;
 
-    const rawFileName = message.file?.name || `pdf_${ Date.now() }.pdf`;
+    const rawFileName = message.file?.name || `pdf_${Date.now()}.pdf`;
     if (!rawFileName.toLowerCase().endsWith(".pdf")) return;
     const fileName = sanitizeFileName(rawFileName);
 
     if (!isValidPdfName(fileName)) {
-      console.log(`⏩ Ignorando nome genérico(tempo real): ${ fileName }`);
+      console.log(`⏩ Ignorando nome genérico(tempo real): ${fileName}`);
       return;
     }
 
@@ -288,13 +288,13 @@ async function runHistoricalSync(channelPeer) {
 
     if (!isTarget) return;
 
-    console.log(`📩 PDF em tempo real: ${ fileName }`);
+    console.log(`📩 PDF em tempo real: ${fileName}`);
     try {
       const accessToken = await getAccessToken();
       const exists = await fileExistsOnOneDrive(fileName, accessToken);
 
       if (exists) {
-        console.log(`ℹ️ Já existe no OneDrive: ${ fileName }`);
+        console.log(`ℹ️ Já existe no OneDrive: ${fileName}`);
         return;
       }
 
@@ -305,14 +305,14 @@ async function runHistoricalSync(channelPeer) {
 
       // ✅ Notifica sem reenviar o arquivo inteiro
       await client.sendMessage(channelPeer, {
-        message: `📚 ** Novo eBook detectado em @${ targetChannel } **\n\nArquivo: \`${fileName}\`\n\n✅ Salvo no OneDrive.`,
+        message: `📚 ** Novo eBook detectado em @${targetChannel} **\n\nArquivo: \`${fileName}\`\n\n✅ Salvo no OneDrive.`,
       });
       console.log(`✨ Finalizado (tempo real): ${fileName}`);
     } catch (err) {
       console.error(`❌ Erro (tempo real): ${err.message}`);
     }
   }, new NewMessage({ incoming: true }));
-}) ();
+})();
 
 const app = express();
 app.get("/", (req, res) => res.send("Userbot Ativo com Sincronismo Histórico ✅"));
