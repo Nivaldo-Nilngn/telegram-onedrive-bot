@@ -4,6 +4,9 @@ const { StringSession } = require("telegram/sessions");
 const { NewMessage } = require("telegram/events");
 const axios = require("axios");
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 /* ===============================
    ⚙️ Configurações (Ambiente)
@@ -78,22 +81,24 @@ async function fileExistsOnOneDrive(fileName, accessToken) {
 
 /* ===============================
    📤 Upload OneDrive — OTIMIZADO PARA MEMÓRIA
-   Usa Upload Session em partes para evitar manter
-   o arquivo inteiro na RAM durante o envio.
+   Usa Upload Session em partes com leitura direta 
+   do disco, evitando manter o arquivo na RAM.
 ================================= */
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB por parte (múltiplo de 320 KB)
+const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB por parte (reduzido para economizar ainda mais RAM)
 
-async function uploadToOneDriveChunked(fileName, buffer, accessToken) {
+async function uploadToOneDriveChunked(fileName, filePath, accessToken) {
   const safeFileName = encodeURIComponent(fileName);
   const folderPath = "ebooksIgreja";
-  const fileSize = buffer.length;
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
 
   console.log(`🚀 Uploading: ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)} MB)...`);
 
   // Arquivo pequeno < 4 MB → upload simples
   if (fileSize < 4 * 1024 * 1024) {
     const uploadUrl = `https://graph.microsoft.com/v1.0/users/${userId}/drive/root:/${folderPath}/${safeFileName}:/content`;
-    await axios.put(uploadUrl, buffer, {
+    const stream = fs.createReadStream(filePath);
+    await axios.put(uploadUrl, stream, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/octet-stream",
@@ -102,8 +107,6 @@ async function uploadToOneDriveChunked(fileName, buffer, accessToken) {
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
     });
-    // Libera referência imediatamente
-    buffer = null;
     console.log(`✅ Upload simples concluído: ${fileName}`);
     return;
   }
@@ -117,12 +120,13 @@ async function uploadToOneDriveChunked(fileName, buffer, accessToken) {
 
   for (let start = 0; start < fileSize; start += CHUNK_SIZE) {
     const end = Math.min(start + CHUNK_SIZE, fileSize);
-    const part = buffer.slice(start, end); // slice não copia — referência
+    const length = end - start;
+    const stream = fs.createReadStream(filePath, { start, end: end - 1 });
 
-    await axios.put(uploadUrl, part, {
+    await axios.put(uploadUrl, stream, {
       headers: {
         "Content-Range": `bytes ${start}-${end - 1}/${fileSize}`,
-        "Content-Length": part.length,
+        "Content-Length": length,
       },
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
@@ -132,8 +136,6 @@ async function uploadToOneDriveChunked(fileName, buffer, accessToken) {
     process.stdout.write(`\r  ↑ ${fileName}: ${progress}%   `);
   }
 
-  // Libera o buffer da RAM após upload
-  buffer = null;
   if (global.gc) global.gc(); // Coleta lixo se disponível
 
   console.log(`\n✅ Upload em partes concluído: ${fileName}`);
@@ -194,14 +196,23 @@ async function runHistoricalSync(channelPeer) {
         const exists = await fileExistsOnOneDrive(fileName, accessToken);
         if (exists) { process.stdout.write("⏭️"); skippedCount++; continue; }
 
-        console.log(`\n📥 [${msgYear}] Baixando: ${fileName}`);
+        console.log(`\n📥 [${msgYear}] Baixando para o disco: ${fileName}`);
 
-        // ✅ Baixa o buffer
-        let buffer = await client.downloadMedia(message.media, { workers: 1 });
+        const tempFilePath = path.join(os.tmpdir(), fileName);
 
-        // ✅ Faz o upload e JÁ libera o buffer dentro da função
-        await uploadToOneDriveChunked(fileName, buffer, accessToken);
-        buffer = null; // Garante que a referência local também é liberada
+        // ✅ Baixa diretamente para o disco
+        await client.downloadMedia(message.media, {
+          workers: 1,
+          outputFile: tempFilePath
+        });
+
+        // ✅ Faz o upload a partir do disco
+        await uploadToOneDriveChunked(fileName, tempFilePath, accessToken);
+
+        // ✅ Apaga o arquivo temporário
+        if (fs.existsSync(tempFilePath)) {
+          fs.rmSync(tempFilePath, { force: true });
+        }
 
         // ✅ Notifica canal SEM reenviar o arquivo (economiza memória)
         const monthName = msgDate.toLocaleString("pt-BR", { month: "long" });
@@ -212,11 +223,15 @@ async function runHistoricalSync(channelPeer) {
         syncedCount++;
         console.log(`✨[${syncedCount}]Concluído: ${fileName}`);
 
-        // Pausa entre arquivos para dar tempo ao GC liberar memória
+        // Pausa entre arquivos para dar tempo ao GC liberar recursos
         await new Promise((r) => setTimeout(r, 2000));
 
       } catch (err) {
         console.error(`\n❌ Erro ao processar ${fileName}: `, err.response ? JSON.stringify(err.response.data) : err.message);
+        const tempFilePath = path.join(os.tmpdir(), fileName);
+        if (fs.existsSync(tempFilePath)) {
+          fs.rmSync(tempFilePath, { force: true });
+        }
         // Continua mesmo em caso de erro
       }
     }
@@ -298,10 +313,17 @@ async function runHistoricalSync(channelPeer) {
         return;
       }
 
-      // ✅ Baixa, sobe em partes, e libera da RAM
-      let buffer = await client.downloadMedia(message.media, { workers: 2 });
-      await uploadToOneDriveChunked(fileName, buffer, accessToken);
-      buffer = null;
+      // ✅ Baixa, sobe em partes lendo do disco, e libera armazenamento
+      const tempFilePath = path.join(os.tmpdir(), fileName);
+      await client.downloadMedia(message.media, {
+        workers: 1,
+        outputFile: tempFilePath
+      });
+      await uploadToOneDriveChunked(fileName, tempFilePath, accessToken);
+
+      if (fs.existsSync(tempFilePath)) {
+        fs.rmSync(tempFilePath, { force: true });
+      }
 
       // ✅ Notifica sem reenviar o arquivo inteiro
       await client.sendMessage(channelPeer, {
@@ -310,6 +332,10 @@ async function runHistoricalSync(channelPeer) {
       console.log(`✨ Finalizado (tempo real): ${fileName}`);
     } catch (err) {
       console.error(`❌ Erro (tempo real): ${err.message}`);
+      const tempFilePath = path.join(os.tmpdir(), fileName);
+      if (fs.existsSync(tempFilePath)) {
+        fs.rmSync(tempFilePath, { force: true });
+      }
     }
   }, new NewMessage({ incoming: true }));
 })();
