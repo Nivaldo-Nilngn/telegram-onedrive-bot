@@ -106,6 +106,7 @@ async function uploadToOneDriveChunked(fileName, filePath, accessToken) {
       },
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
+      timeout: 600000,
     });
     console.log(`✅ Upload simples concluído: ${fileName}`);
     return;
@@ -130,6 +131,7 @@ async function uploadToOneDriveChunked(fileName, filePath, accessToken) {
       },
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
+      timeout: 600000,
     });
 
     const progress = ((end / fileSize) * 100).toFixed(0);
