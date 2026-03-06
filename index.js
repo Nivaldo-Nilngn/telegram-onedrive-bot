@@ -14,7 +14,8 @@ const os = require("os");
 const apiId = parseInt(process.env.API_ID);
 const apiHash = process.env.API_HASH;
 const stringSession = new StringSession(process.env.STRING_SESSION || "");
-const targetChannel = process.env.TARGET_CHANNEL || "livrosemaudio";
+const targetChannelsRaw = process.env.TARGET_CHANNEL || "livrosemaudio,livrariabancaebdevangelicapdfdoc";
+const targetChannels = targetChannelsRaw.split(",").map(c => c.trim().replace(/^https?:\/\/t\.me\//, ''));
 const ownChannel = process.env.OWN_CHANNEL;
 
 const clientId = process.env.CLIENT_ID;
@@ -160,81 +161,88 @@ async function runHistoricalSync(channelPeer) {
     let accessToken = await getAccessToken();
     let tokenRefreshAt = Date.now() + 50 * 60 * 1000;
 
-    const messageIterator = client.iterMessages(targetChannel, {
-      offsetDate: startBeforeDate,
-      limit: null,
-    });
-
-    for await (const message of messageIterator) {
-      // Log mensal de progresso
-      const msgDate = new Date(message.date * 1000);
-      const msgMonth = msgDate.getMonth();
-      const msgYear = msgDate.getFullYear();
-
-      if (msgMonth !== currentMonth || msgYear !== currentYear) {
-        currentMonth = msgMonth;
-        currentYear = msgYear;
-        const monthName = msgDate.toLocaleString("pt-BR", { month: "long" });
-        console.log(`\n📅 --- [ ${monthName.toUpperCase()} / ${currentYear} ] ---`);
-        // Força GC entre meses para liberar memória acumulada
-        if (global.gc) global.gc();
-      }
-
-      // Filtros básicos
-      if (!message.media || !message.document) continue;
-      const rawFileName = message.file?.name || `ebook_${message.id}.pdf`;
-      if (!rawFileName.toLowerCase().endsWith(".pdf")) continue;
-      const fileName = sanitizeFileName(rawFileName);
-      if (!isValidPdfName(fileName)) { process.stdout.write("."); continue; }
-
-      // Renova token se necessário
-      if (Date.now() > tokenRefreshAt) {
-        accessToken = await getAccessToken();
-        tokenRefreshAt = Date.now() + 50 * 60 * 1000;
-        console.log("🔑 Token OneDrive renovado.");
-      }
-
+    for (const channel of targetChannels) {
+      console.log(`\n🔎 Iniciando varredura no canal: ${channel}`);
       try {
-        const exists = await fileExistsOnOneDrive(fileName, accessToken);
-        if (exists) { process.stdout.write("⏭️"); skippedCount++; continue; }
-
-        console.log(`\n📥 [${msgYear}] Baixando para o disco: ${fileName}`);
-
-        const tempFilePath = path.join(os.tmpdir(), fileName);
-
-        // ✅ Baixa diretamente para o disco
-        await client.downloadMedia(message.media, {
-          workers: 1,
-          outputFile: tempFilePath
+        const messageIterator = client.iterMessages(channel, {
+          offsetDate: startBeforeDate,
+          limit: null,
         });
 
-        // ✅ Faz o upload a partir do disco
-        await uploadToOneDriveChunked(fileName, tempFilePath, accessToken);
+        for await (const message of messageIterator) {
+          // Log mensal de progresso
+          const msgDate = new Date(message.date * 1000);
+          const msgMonth = msgDate.getMonth();
+          const msgYear = msgDate.getFullYear();
 
-        // ✅ Apaga o arquivo temporário
-        if (fs.existsSync(tempFilePath)) {
-          fs.rmSync(tempFilePath, { force: true });
+          if (msgMonth !== currentMonth || msgYear !== currentYear) {
+            currentMonth = msgMonth;
+            currentYear = msgYear;
+            const monthName = msgDate.toLocaleString("pt-BR", { month: "long" });
+            console.log(`\n📅 --- [ ${monthName.toUpperCase()} / ${currentYear} ] ---`);
+            // Força GC entre meses para liberar memória acumulada
+            if (global.gc) global.gc();
+          }
+
+          // Filtros básicos
+          if (!message.media || !message.document) continue;
+          const rawFileName = message.file?.name || `ebook_${message.id}.pdf`;
+          if (!rawFileName.toLowerCase().endsWith(".pdf")) continue;
+          const fileName = sanitizeFileName(rawFileName);
+          if (!isValidPdfName(fileName)) { process.stdout.write("."); continue; }
+
+          // Renova token se necessário
+          if (Date.now() > tokenRefreshAt) {
+            accessToken = await getAccessToken();
+            tokenRefreshAt = Date.now() + 50 * 60 * 1000;
+            console.log("🔑 Token OneDrive renovado.");
+          }
+
+          try {
+            const exists = await fileExistsOnOneDrive(fileName, accessToken);
+            if (exists) { process.stdout.write("⏭️"); skippedCount++; continue; }
+
+            console.log(`\n📥 [${msgYear}] Baixando para o disco: ${fileName}`);
+
+            const tempFilePath = path.join(os.tmpdir(), fileName);
+
+            // ✅ Baixa diretamente para o disco
+            await client.downloadMedia(message.media, {
+              workers: 1,
+              outputFile: tempFilePath
+            });
+
+            // ✅ Faz o upload a partir do disco
+            await uploadToOneDriveChunked(fileName, tempFilePath, accessToken);
+
+            // ✅ Apaga o arquivo temporário
+            if (fs.existsSync(tempFilePath)) {
+              fs.rmSync(tempFilePath, { force: true });
+            }
+
+            // ✅ Notifica canal SEM reenviar o arquivo (economiza memória)
+            const monthName = msgDate.toLocaleString("pt-BR", { month: "long" });
+            await client.sendMessage(channelPeer, {
+              message: `📚 **Histórico Recuperado (${monthName} / ${msgYear})**\n\nArquivo: '${fileName}'\n\n✅ Sincronizado no OneDrive.`,
+            });
+
+            syncedCount++;
+            console.log(`✨[${syncedCount}]Concluído: ${fileName}`);
+
+            // Pausa entre arquivos para dar tempo ao GC liberar recursos
+            await new Promise((r) => setTimeout(r, 2000));
+
+          } catch (err) {
+            console.error(`\n❌ Erro ao processar ${fileName}: `, err.response ? JSON.stringify(err.response.data) : err.message);
+            const tempFilePath = path.join(os.tmpdir(), fileName);
+            if (fs.existsSync(tempFilePath)) {
+              fs.rmSync(tempFilePath, { force: true });
+            }
+            // Continua mesmo em caso de erro
+          }
         }
-
-        // ✅ Notifica canal SEM reenviar o arquivo (economiza memória)
-        const monthName = msgDate.toLocaleString("pt-BR", { month: "long" });
-        await client.sendMessage(channelPeer, {
-          message: `📚 **Histórico Recuperado (${monthName} / ${msgYear})**\n\nArquivo: '${fileName}'\n\n✅ Sincronizado no OneDrive.`,
-        });
-
-        syncedCount++;
-        console.log(`✨[${syncedCount}]Concluído: ${fileName}`);
-
-        // Pausa entre arquivos para dar tempo ao GC liberar recursos
-        await new Promise((r) => setTimeout(r, 2000));
-
       } catch (err) {
-        console.error(`\n❌ Erro ao processar ${fileName}: `, err.response ? JSON.stringify(err.response.data) : err.message);
-        const tempFilePath = path.join(os.tmpdir(), fileName);
-        if (fs.existsSync(tempFilePath)) {
-          fs.rmSync(tempFilePath, { force: true });
-        }
-        // Continua mesmo em caso de erro
+        console.error(`⚠️ Erro ao varrer o canal ${channel}:`, err.message);
       }
     }
 
@@ -299,8 +307,8 @@ async function runHistoricalSync(channelPeer) {
 
     const source = chat.username || chat.title || "";
     const isTarget =
-      source === targetChannel ||
-      chat.id?.toString() === targetChannel ||
+      targetChannels.includes(source) ||
+      targetChannels.includes(chat.id?.toString()) ||
       message.isPrivate;
 
     if (!isTarget) return;
@@ -329,7 +337,7 @@ async function runHistoricalSync(channelPeer) {
 
       // ✅ Notifica sem reenviar o arquivo inteiro
       await client.sendMessage(channelPeer, {
-        message: `📚 ** Novo eBook detectado em @${targetChannel} **\n\nArquivo: \`${fileName}\`\n\n✅ Salvo no OneDrive.`,
+        message: `📚 ** Novo eBook detectado em ${source} **\n\nArquivo: \`${fileName}\`\n\n✅ Salvo no OneDrive.`,
       });
       console.log(`✨ Finalizado (tempo real): ${fileName}`);
     } catch (err) {
