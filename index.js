@@ -49,6 +49,12 @@ function sanitizeFileName(fileName) {
 }
 
 /* ===============================
+   ⚖️ Limite máximo de arquivo
+================================= */
+const MAX_FILE_SIZE_MB = 300; // Limite de 300 MB para evitar queda na Render
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+
+/* ===============================
    🔐 Autenticação OneDrive (MS Graph)
 ================================= */
 async function getAccessToken() {
@@ -151,11 +157,8 @@ async function uploadToOneDriveChunked(fileName, filePath, accessToken) {
 async function runHistoricalSync(channelPeer) {
   console.log("🚀 Iniciando sincronização histórica retroativa...");
 
-  const startBeforeDate = new Date("2026-01-01").getTime() / 1000;
   let syncedCount = 0;
   let skippedCount = 0;
-  let currentMonth = -1;
-  let currentYear = -1;
 
   try {
     let accessToken = await getAccessToken();
@@ -163,9 +166,11 @@ async function runHistoricalSync(channelPeer) {
 
     for (const channel of targetChannels) {
       console.log(`\n🔎 Iniciando varredura no canal: ${channel}`);
+      let currentMonth = -1;
+      let currentYear = -1;
+
       try {
         const messageIterator = client.iterMessages(channel, {
-          offsetDate: startBeforeDate,
           limit: null,
         });
 
@@ -190,6 +195,12 @@ async function runHistoricalSync(channelPeer) {
           if (!rawFileName.toLowerCase().endsWith(".pdf")) continue;
           const fileName = sanitizeFileName(rawFileName);
           if (!isValidPdfName(fileName)) { process.stdout.write("."); continue; }
+
+          // Proteção contra arquivos gigantes (ex: 1.7 GB)
+          if (message.file?.size && message.file.size > MAX_FILE_SIZE_BYTES) {
+            console.log(`\n⏩ Ignorando arquivo gigante: ${fileName} (${(message.file.size / 1024 / 1024).toFixed(2)} MB)`);
+            continue;
+          }
 
           // Renova token se necessário
           if (Date.now() > tokenRefreshAt) {
@@ -299,6 +310,12 @@ async function runHistoricalSync(channelPeer) {
 
     if (!isValidPdfName(fileName)) {
       console.log(`⏩ Ignorando nome genérico(tempo real): ${fileName}`);
+      return;
+    }
+
+    // Proteção contra arquivos gigantes (tempo real)
+    if (message.file?.size && message.file.size > MAX_FILE_SIZE_BYTES) {
+      console.log(`⏩ Ignorando arquivo gigante (tempo real): ${fileName} (${(message.file.size / 1024 / 1024).toFixed(2)} MB)`);
       return;
     }
 
